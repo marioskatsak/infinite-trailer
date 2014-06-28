@@ -8,10 +8,19 @@ end_black = []
 frame_number = 0
 current_clip_number = 0
 
+video_width = int(cap.get(cv2.cv.CV_CAP_PROP_FRAME_WIDTH))
+video_height = int(cap.get(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT))
+dimensions = (video_width, video_height)
+
 def get_video_writer(clip_number):
-    fourcc = cv2.cv.CV_FOURCC(*'XVID')
-    out = cv2.VideoWriter('clip%d.avi' % clip_number,fourcc, 20.0, (640,480))
+    fourcc = cv2.cv.CV_FOURCC('F', 'M', 'P', '4')
+    out = cv2.VideoWriter('clip%d.avi' % clip_number,
+                          fourcc,
+                          30.0,
+                          dimensions,
+                          1)
     return out
+
 writer = get_video_writer(current_clip_number)
 while(True):
     # Capture frame-by-frame
@@ -26,24 +35,24 @@ while(True):
         seen_black = True
         start_black.append(frame_number)
         writer.release()
+        print('found black section %d' % current_clip_number)
     elif number_of_zeros > 0 and seen_black:
         end_black.append(frame_number)
         seen_black = False
         current_clip_number += 1
         writer = get_video_writer(current_clip_number)
-    
+
     if number_of_zeros > 0:
-        print 'wrote frame'
         writer.write(frame)
-        
+
     # Display the resulting frame
-    cv2.imshow('frame',gray)
+    # cv2.imshow('frame',gray)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
     frame_number += 1
 
 print start_black
-print end_black	
+print end_black
 # When everything done, release the capture
 cap.release()
 writer.release()
