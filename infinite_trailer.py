@@ -22,15 +22,15 @@ def main(argv=None):
         scene_splitter = SceneSplitter(cap, args.threshold)
         scenes = scene_splitter.find_scenes()
     cv2.destroyAllWindows()
-    render_scenes(args.video_path, scenes)
+    render_scenes(args.video_path, scenes, args.max_length)
 
 
 def parse_args(argv=None):
     if argv is None:
         argv = sys.argv
     parser = ArgumentParser()
-    parser.add_argument('-t', '--threshold', default=10, type=int)
-    parser.add_argument('-l', '--max-length', default=5, type=int)
+    parser.add_argument('-t', '--threshold', default=30, type=int)
+    parser.add_argument('-l', '--max-length', default=2, type=int)
     parser.add_argument('-v', '--show-video', action='store_true',
                         default=False)
     parser.add_argument('video_path', help='video file to create clips from')
@@ -97,9 +97,11 @@ class SceneSplitter(object):
         self._scenes.append(scene)
 
 
-def render_scenes(video_path, scenes):
+def render_scenes(video_path, scenes, max_length):
     pool = multiprocessing.Pool()
     for index, (start_time, stop_time) in enumerate(scenes):
+        if stop_time - start_time > max_length:
+            continue
         pool.apply_async(render_scene, [
             index,
             video_path,
