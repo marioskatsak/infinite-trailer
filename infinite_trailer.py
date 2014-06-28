@@ -1,125 +1,136 @@
 #!/usr/bin/env python2.7
 
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 from argparse import ArgumentParser
-import sys
+from contextlib import contextmanager
 from time import sleep
+import multiprocessing
 import os
+import subprocess
+import sys
 
-import numpy as np
 import cv2
-
-
-def get_clip_file_name(film_name, clip_number):
-    return 'clip%s%d.avi' % (film_name, clip_number)
-
-
-def get_video_writer(film_name, clip_number, dimensions):
-    fourcc = cv2.cv.CV_FOURCC('F', 'M', 'P', '4')
-    out = cv2.VideoWriter(get_clip_file_name(film_name, clip_number),
-                          fourcc,
-                          30.0,
-                          dimensions,
-                          1)
-    return out
-
-
-def create_infinite_trailer_clips(film_name, threshold, max_length, show_video):
-    cap = cv2.VideoCapture(film_name)
-    seen_black = False
-    start_black = []
-    end_black = []
-    frame_number = 0
-    current_clip_number = 0
-    last_clip_frame_number = 0
-
-    video_width = int(cap.get(cv2.cv.CV_CAP_PROP_FRAME_WIDTH))
-    video_height = int(cap.get(cv2.cv.CV_CAP_PROP_FRAME_HEIGHT))
-    video_fps = int(cap.get(cv2.cv.CV_CAP_PROP_FPS))
-
-    dimensions = (video_width, video_height)
-    if not show_video:
-        writer = get_video_writer(film_name, current_clip_number, dimensions)
-    while(True):
-        # Capture frame-by-frame
-        ret, frame = cap.read()
-        if not ret:
-            # End of the video
-            break
-
-        # Our operations on the frame come here
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-        number_of_zeros = np.count_nonzero(gray > threshold)
-        if number_of_zeros == 0 and not seen_black:
-            seen_black = True
-            start_black.append(frame_number)
-            if not show_video:
-                writer.release()
-                frames_in_clip = frame_number - last_clip_frame_number
-                if frames_in_clip / video_fps > max_length:
-                    sleep(1)
-                    name = get_clip_file_name(film_name, current_clip_number)
-                    print 'Deleting long clip %s' % name
-                    os.unlink(name)
-
-            print('found black section %d' % current_clip_number)
-        elif number_of_zeros > 0 and seen_black:
-            end_black.append(frame_number)
-            seen_black = False
-            current_clip_number += 1
-            if not show_video:
-                writer = get_video_writer(film_name,
-                                      current_clip_number,
-                                      dimensions)
-                last_clip_frame_number = frame_number
-
-        if number_of_zeros > 0 and not show_video:
-            writer.write(frame)
-        elif number_of_zeros == 0 and show_video:
-            gray[0:100,0:100] = 255
-
-        if show_video:
-            # Display the resulting frame
-            cv2.imshow('frame', gray)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-        frame_number += 1
-
-    print start_black
-    print end_black
-
-    cap.release()
-    if not show_video:
-        writer.release()
-    cv2.destroyAllWindows()
-
-def build_argument_parser():
-    parser = ArgumentParser()
-    parser.add_argument('film_file', help='video file to create clips from')
-    parser.add_argument('--threshold', default=10, type=int)
-    parser.add_argument('--max-length', default=5, type=int)
-    parser.add_argument('--show-video',dest='show_video',action='store_true')
-    parser.set_defaults(show_video=False)
-    return parser
+import numpy
 
 
 def main(argv=None):
+    args = parse_args(argv=argv)
+    with video_capture(args.video_path) as cap:
+        scene_splitter = SceneSplitter(cap, args.threshold)
+        scenes = scene_splitter.find_scenes()
+    cv2.destroyAllWindows()
+    render_scenes(args.video_path, scenes)
+
+
+def parse_args(argv=None):
     if argv is None:
         argv = sys.argv
-    args = build_argument_parser().parse_args(args=argv[1:])
+    parser = ArgumentParser()
+    parser.add_argument('-t', '--threshold', default=10, type=int)
+    parser.add_argument('-l', '--max-length', default=5, type=int)
+    parser.add_argument('-v', '--show-video', action='store_true',
+                        default=False)
+    parser.add_argument('video_path', help='video file to create clips from')
+    return parser.parse_args(args=argv[1:])
 
-    create_infinite_trailer_clips(args.film_file,
-                                 args.threshold,
-                                 args.max_length,
-                                 args.show_video)
 
-    return 0
+@contextmanager
+def video_capture(vido_path):
+    cap = cv2.VideoCapture(vido_path)
+    yield cap
+    cap.release()
+
+
+class SceneSplitter(object):
+    def __init__(self, cap, threshold):
+        self._cap = cap
+        self._threshold = threshold
+
+        self._find_scenes_called = False
+
+        self._in_fade = False
+        self._scenes = []
+        self._start_index = 0
+
+        self._video_width = self._get_int_prop('FRAME_WIDTH')
+        self._video_height = self._get_int_prop('FRAME_HEIGHT')
+        self._video_fps = self._get_int_prop('FPS')
+
+    def _get_int_prop(self, prop_name):
+        name = 'CV_CAP_PROP_{prop_name}'.format(prop_name=prop_name)
+        return int(self._cap.get(getattr(cv2.cv, name)))
+
+    def find_scenes(self):
+        if not self._find_scenes_called:
+            self._find_scenes_called = True
+            for index, frame in enumerate(self._frames()):
+                self._check_frame(index, frame)
+        return self._scenes
+
+    def _frames(self):
+        while True:
+            ret, frame = self._cap.read()
+            if not ret:
+                raise StopIteration
+            yield cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    def _check_frame(self, index, frame):
+        if self._count_light_pixels(frame) == 0:
+            if not self._in_fade:
+                self._in_fade = True
+                self._add_frame(self._start_index, index)
+        elif self._in_fade:
+            self._in_fade = False
+            self._start_index = index
+
+    def _count_light_pixels(self, frame):
+        return numpy.count_nonzero(frame > self._threshold)
+
+    def _add_frame(self, start_index, stop_index):
+        def timestamp(index):
+            return index / self._video_fps
+        scene = (timestamp(start_index), timestamp(stop_index))
+        print(scene)
+        self._scenes.append(scene)
+
+
+def render_scenes(video_path, scenes):
+    pool = multiprocessing.Pool()
+    for index, (start_time, stop_time) in enumerate(scenes):
+        pool.apply_async(render_scene, [
+            index,
+            video_path,
+            start_time,
+            stop_time
+        ])
+    pool.close()
+    pool.join()
+
+
+def render_scene(index, video_path, start_time, stop_time):
+    path, ext = os.path.splitext(video_path)
+    path = '{path}-{index}.ogg'.format(path=path, index=index)
+    if os.path.isfile(path):
+        os.remove(path)
+
+    args = [
+        '/usr/bin/ffmpeg',
+        '-i', video_path,
+        '-q', '5',
+        '-pix_fmt', 'yuv420p',
+        '-acodec', 'libvorbis',
+        '-vcodec', 'libtheora',
+        '-ss', str(start_time),
+        '-to', str(stop_time),
+        path,
+    ]
+
+    subprocess.check_call(args)
 
 
 if __name__ == '__main__':
-    try:
-        return_code = main()
-    except KeyboardInterrupt:
-        return_code = 1
-    exit(return_code)
+    sys.exit(main())
 
