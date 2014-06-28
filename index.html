@@ -1,7 +1,18 @@
 <html>
+<head>
+  <title>INFINITE TRAILER</title>
+  <style>
+    #trailer {
+      display: table;
+      top: 0;
+      bottom: 0;
+      position: absolute;
+      margin: auto;
+    }
+  </style>
+</head>
 <body style="background-color: black;">
-<video id="trailer" width="100%" onended="nextVideo()" controls>
-</video>
+  <video id="trailer" width="100%" onended="nextVideo()" controls></video>
 <script>
 
 var videoPlayer = document.getElementById('trailer');
