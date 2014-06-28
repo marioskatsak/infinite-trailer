@@ -5,10 +5,13 @@ from __future__ import division
 from __future__ import print_function
 
 from argparse import ArgumentParser
+from collections import OrderedDict
 from contextlib import contextmanager
-from time import sleep
+import json
+import logging
 import multiprocessing
 import os
+import shutil
 import subprocess
 import sys
 
@@ -16,25 +19,81 @@ import cv2
 import numpy
 
 
+LOG_LEVELS = (
+    logging.CRITICAL,
+    logging.ERROR,
+    logging.WARNING,
+    logging.INFO,
+    logging.DEBUG
+)
+
+LOG_LEVEL_TO_NAMES = OrderedDict((level, logging.getLevelName(level).lower())
+                                 for level in LOG_LEVELS)
+LOG_NAME_TO_LEVEL = OrderedDict((name, level)
+                                for level, name in LOG_LEVEL_TO_NAMES.items())
+
+
 def main(argv=None):
     args = parse_args(argv=argv)
-    with video_capture(args.video_path) as cap:
-        scene_splitter = SceneSplitter(cap, args.threshold)
-        scenes = scene_splitter.find_scenes()
-    cv2.destroyAllWindows()
-    render_scenes(args.video_path, scenes)
+    configure_logger(args)
+
+    command = args.command
+    if command == 'find':
+        find_scenes(args)
+    elif command == 'render':
+        render_clips(args)
+    elif command == 'listing':
+        make_listing(args)
+    else:
+        raise RuntimeError('Invalid command {}'.format(args.command))
 
 
 def parse_args(argv=None):
     if argv is None:
         argv = sys.argv
     parser = ArgumentParser()
-    parser.add_argument('-t', '--threshold', default=10, type=int)
-    parser.add_argument('-l', '--max-length', default=5, type=int)
-    parser.add_argument('-v', '--show-video', action='store_true',
-                        default=False)
-    parser.add_argument('video_path', help='video file to create clips from')
+    parser.add_argument('-l', '--log-level', choices=LOG_NAME_TO_LEVEL.keys(),
+                        default=LOG_LEVEL_TO_NAMES[logging.INFO])
+    subparsers = parser.add_subparsers(dest='command')
+    find = subparsers.add_parser('find')
+    find.add_argument('-t', '--threshold', default=30, type=int)
+    find.add_argument('video_path')
+    find.add_argument('output_dir')
+    render = subparsers.add_parser('render')
+    render.add_argument('-m', '--max-length', default=3, type=int)
+    render.add_argument('scenes_path')
+    render.add_argument('video_path')
+    render.add_argument('output_dir')
+    listing = subparsers.add_parser('listing')
+    listing.add_argument('clips_dir')
+    listing.add_argument('listing_path')
     return parser.parse_args(args=argv[1:])
+
+
+def configure_logger(args):
+    global logger
+    logging.basicConfig(datefmt='%H:%M:%S',
+                        format='[%(levelname).1s %(asctime)s] %(message)s',
+                        level=LOG_NAME_TO_LEVEL[args.log_level])
+    logger = logging.getLogger(__name__)
+
+
+def find_scenes(args):
+    video_path = args.video_path
+    video_name = os.path.basename(video_path)
+    video_stem, video_ext = os.path.splitext(video_name)
+
+    output_dir = args.output_dir
+    ensure_dir(output_dir)
+    scenes_name = '{stem}.json'.format(stem=video_stem)
+    scenes_path = os.path.join(output_dir, scenes_name)
+
+    with video_capture(args.video_path) as cap:
+        scene_splitter = SceneFinder(cap, args.threshold)
+        scenes = scene_splitter.find_scenes()
+
+    with open(scenes_path, 'w') as scenes_file:
+        json.dump(scenes, scenes_file)
 
 
 @contextmanager
@@ -44,7 +103,7 @@ def video_capture(vido_path):
     cap.release()
 
 
-class SceneSplitter(object):
+class SceneFinder(object):
     def __init__(self, cap, threshold):
         self._cap = cap
         self._threshold = threshold
@@ -93,30 +152,45 @@ class SceneSplitter(object):
         def timestamp(index):
             return index / self._video_fps
         scene = (timestamp(start_index), timestamp(stop_index))
-        print(scene)
+        logger.info('Scene: %.1f %.1f', *scene)
         self._scenes.append(scene)
 
 
-def render_scenes(video_path, scenes):
+
+def render_clips(args):
+    video_path = args.video_path
+    video_name = os.path.basename(video_path)
+    video_stem, video_ext = os.path.splitext(video_name)
+
+    output_dir = args.output_dir
+    clips_dir = os.path.join(output_dir, video_stem)
+    ensure_dir(output_dir)
+    if os.path.isdir(clips_dir):
+        shutil.rmtree(clips_dir)
+    os.mkdir(clips_dir)
+
+    with open(args.scenes_path) as scenes_file:
+        scenes = json.load(scenes_file)
+
+    def max_length(scene):
+        return scene[1] - scene[0] < args.max_length
+    scenes = filter(max_length, scenes)
+
     pool = multiprocessing.Pool()
     for index, (start_time, stop_time) in enumerate(scenes):
-        pool.apply_async(render_scene, [
-            index,
-            video_path,
-            start_time,
-            stop_time
-        ])
+        clip_name = '{}-{}.ogg'.format(video_stem, index)
+        clip_path = os.path.join(clips_dir, clip_name)
+        if os.path.exists(clip_path):
+            os.remove(clip_path)
+        pool.apply_async(render_clip, [video_path, clip_path, start_time,
+                                       stop_time])
     pool.close()
     pool.join()
 
 
-def render_scene(index, video_path, start_time, stop_time):
-    path, ext = os.path.splitext(video_path)
-    path = '{path}-{index}.ogg'.format(path=path, index=index)
-    if os.path.isfile(path):
-        os.remove(path)
-
-    args = [
+def render_clip(video_path, clip_path, start_time, stop_time):
+    logger.info('Rendering %s ...', clip_path)
+    subprocess.check_call([
         '/usr/bin/ffmpeg',
         '-i', video_path,
         '-q', '5',
@@ -125,10 +199,25 @@ def render_scene(index, video_path, start_time, stop_time):
         '-vcodec', 'libtheora',
         '-ss', str(start_time),
         '-to', str(stop_time),
-        path,
-    ]
+        clip_path,
+    ])
 
-    subprocess.check_call(args)
+
+def ensure_dir(path):
+    if not os.path.exists(path):
+        os.mkdir(path)
+
+
+def make_listing(args):
+    listing = {'videos': []}
+    for root, dirs, files in os.walk(args.clips_dir):
+        for file_ in files:
+            if os.path.splitext(file_)[1] != '.ogg':
+                continue
+            path = os.path.join(root[len(args.clips_dir) + 1:], file_)
+            listing['videos'].append(path)
+    with open(args.listing_path, 'w') as listing_file:
+        json.dump(listing, listing_file)
 
 
 if __name__ == '__main__':
