@@ -1,0 +1,35 @@
+<html>
+<body style="background-color: black;">
+<video id="trailer" width="100%" onended="nextVideo()" controls>
+</video>
+<script>
+
+var videoPlayer = document.getElementById('trailer');
+
+var videos = null;
+
+function nextVideo() {
+  var randomIndex = Math.floor(Math.random() * videos.length);
+  randomVideoSrc = videos[randomIndex];
+  videoPlayer.src = randomVideoSrc;
+  videoPlayer.muted = false;
+  videoPlayer.play();
+}
+
+var req = new XMLHttpRequest();
+req.overrideMimeType('application/json');
+req.open('GET', 'videos.json', true);
+req.onreadystatechange = function(request, url) {
+  if (req.readyState == 4) {
+    if (req.status == 200) {
+      console.log(req.responseText);
+      videos = JSON.parse(req.responseText).videos;
+      nextVideo();
+    }
+  }
+};
+req.send(null);
+
+</script>
+</body>
+</html>
