@@ -56,7 +56,7 @@ def parse_args(argv=None):
                         default=LOG_LEVEL_TO_NAMES[logging.INFO])
     subparsers = parser.add_subparsers(dest='command')
     find = subparsers.add_parser('find')
-    find.add_argument('-t', '--threshold', default=30, type=int)
+    find.add_argument('-t', '--threshold', default=10, type=int)
     find.add_argument('video_path')
     find.add_argument('output_dir')
     render = subparsers.add_parser('render')
@@ -197,6 +197,7 @@ def render_clip(video_path, clip_path, start_time, stop_time):
         '-pix_fmt', 'yuv420p',
         '-acodec', 'libvorbis',
         '-vcodec', 'libtheora',
+        '-s', '852x480',
         '-ss', str(start_time),
         '-to', str(stop_time),
         clip_path,
@@ -214,7 +215,8 @@ def make_listing(args):
         for file_ in files:
             if os.path.splitext(file_)[1] != '.ogg':
                 continue
-            path = os.path.join(root[len(args.clips_dir) + 1:], file_)
+            common_prefix = os.path.commonprefix([args.clips_dir, root])
+            path = os.path.join(root[len(common_prefix):], file_)
             listing['videos'].append(path)
     with open(args.listing_path, 'w') as listing_file:
         json.dump(listing, listing_file)

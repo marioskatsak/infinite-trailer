@@ -1,5 +1,6 @@
 *.avi
 *.mp4
 *.ogg
-/output/
-clip*
+/html/videos/
+/html/*.json
+
