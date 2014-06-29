@@ -32,6 +32,7 @@ LOG_LEVEL_TO_NAMES = OrderedDict((level, logging.getLevelName(level).lower())
 LOG_NAME_TO_LEVEL = OrderedDict((name, level)
                                 for level, name in LOG_LEVEL_TO_NAMES.items())
 
+VIDEO_EXTENSION = 'mp4'
 
 def main(argv=None):
     args = parse_args(argv=argv)
@@ -179,7 +180,7 @@ def render_clips(args):
 
     pool = multiprocessing.Pool()
     for index, (start_time, stop_time) in enumerate(scenes):
-        clip_name = '{}-{}.ogg'.format(video_stem, index)
+        clip_name = '{}-{}.{}'.format(video_stem, index, VIDEO_EXTENSION)
         clip_path = os.path.join(clips_dir, clip_name)
         if os.path.exists(clip_path):
             os.remove(clip_path)
@@ -193,14 +194,11 @@ def render_clip(video_path, clip_path, start_time, stop_time):
     logger.info('Rendering %s ...', clip_path)
     subprocess.check_call([
         '/usr/bin/ffmpeg',
-        '-i', video_path,
-        '-q', '5',
-        '-pix_fmt', 'yuv420p',
-        '-acodec', 'libvorbis',
-        '-vcodec', 'libtheora',
-        '-s', '852x480',
         '-ss', str(start_time),
-        '-to', str(stop_time),
+        '-t', str(stop_time - start_time),
+        '-i', video_path,
+        '-strict',
+        '-2',
         clip_path,
     ])
 
@@ -214,7 +212,7 @@ def make_listing(args):
     listing = {'videos': []}
     for root, dirs, files in os.walk(args.clips_dir):
         for file_ in files:
-            if os.path.splitext(file_)[1] != '.ogg':
+            if os.path.splitext(file_)[1] != '.{}'.format(VIDEO_EXTENSION):
                 continue
             common_prefix = os.path.commonprefix([args.clips_dir, root])
             path = os.path.join(root[len(common_prefix) + 1:], file_)
