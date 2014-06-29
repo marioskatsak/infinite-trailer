@@ -1,6 +1,6 @@
-*.avi
 *.mp4
 *.ogg
+/html/listings.json
 /html/videos/
-/html/*.json
-
+/scenes/
+/trailers/
