@@ -20,5 +20,5 @@ for trailer in $trailers_dir/*.mp4; do
     it render $scenes_dir/${trailer:r:t}.json $trailer $clips_dir
 done
 
-it listing $clips_dir $listing_path
+it listing $html_dir $listing_path
 

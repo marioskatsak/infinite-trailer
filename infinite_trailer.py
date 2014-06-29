@@ -60,7 +60,8 @@ def parse_args(argv=None):
     find.add_argument('video_path')
     find.add_argument('output_dir')
     render = subparsers.add_parser('render')
-    render.add_argument('-m', '--max-length', default=3, type=int)
+    render.add_argument('-m', '--max-length', default=5, type=int)
+    render.add_argument('-n', '--min-length', default=0.5, type=float)
     render.add_argument('scenes_path')
     render.add_argument('video_path')
     render.add_argument('output_dir')
@@ -172,9 +173,9 @@ def render_clips(args):
     with open(args.scenes_path) as scenes_file:
         scenes = json.load(scenes_file)
 
-    def max_length(scene):
-        return scene[1] - scene[0] < args.max_length
-    scenes = filter(max_length, scenes)
+    def min_max_length(scene):
+        return args.min_length < scene[1] - scene[0] < args.max_length
+    scenes = filter(min_max_length, scenes)
 
     pool = multiprocessing.Pool()
     for index, (start_time, stop_time) in enumerate(scenes):
@@ -216,7 +217,7 @@ def make_listing(args):
             if os.path.splitext(file_)[1] != '.ogg':
                 continue
             common_prefix = os.path.commonprefix([args.clips_dir, root])
-            path = os.path.join(root[len(common_prefix):], file_)
+            path = os.path.join(root[len(common_prefix) + 1:], file_)
             listing['videos'].append(path)
     with open(args.listing_path, 'w') as listing_file:
         json.dump(listing, listing_file)
