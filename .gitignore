@@ -1,4 +1,5 @@
 *.avi
 *.mp4
 *.ogg
+/output/
 clip*
