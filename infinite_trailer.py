@@ -36,11 +36,11 @@ VIDEO_EXTENSION = 'webm'
 YOUTUBE_VIDEO_FORMAT = '242'
 YOUTUBE_AUDIO_FORMAT = '171'
 
-THRESHOLD = 10
+THRESHOLD = 30
 
 CLIPS_OUTPUT_DIR = os.path.join('html', 'clips')
 
-MIN_CLIP_LENGTH = 0.5
+MIN_CLIP_LENGTH = 1
 MAX_CLIP_LENGTH = 5
 
 LISTINGS_PATH = os.path.join('html', 'listings.json')
@@ -73,11 +73,21 @@ def parse_args(argv=None):
     subparsers = parser.add_subparsers(dest='command')
 
     bulk = subparsers.add_parser('bulk')
+    bulk.add_argument('-m', '--max-length', default=MAX_CLIP_LENGTH, type=float)
+    bulk.add_argument('-n', '--min-length', default=MIN_CLIP_LENGTH, type=float)
     bulk.add_argument('-c', '--trailers_config_path', default='trailers.json')
     bulk.add_argument('-l', '--listings_path', default=LISTINGS_PATH)
     bulk.add_argument('-o', '--trailers_output_dir', default='trailers')
     bulk.add_argument('-s', '--scenes_output_dir', default='scenes')
     bulk.add_argument('-t', '--clips_output_dir', default=CLIPS_OUTPUT_DIR)
+    bulk.add_argument('-d', '--download', dest='download', action='store_true')
+    bulk.add_argument('-D', '--skip-download', dest='download',
+                      action='store_false')
+    bulk.set_defaults(download=True)
+    bulk.add_argument('-r', '--render', dest='render', action='store_true')
+    bulk.add_argument('-R', '--skip-render', dest='render',
+                      action='store_false')
+    bulk.set_defaults(render=True)
 
     download = subparsers.add_parser('download')
     download.add_argument('youtube_id')
@@ -125,13 +135,41 @@ def bulk(args):
     clips_output_dir = args.clips_output_dir
     ensure_dir(clips_output_dir)
 
-    for trailer in trailers_config['trailers']:
-        output_path = os.path.join(trailers_output_dir, trailer['name'])
-        _download_trailer(output_path, trailer['youtube_id'])
-        scenes_path = _find_scenes(output_path, scenes_output_dir)
-        _render_clips(output_path, clips_output_dir, scenes_path)
+    # XXX: Only run task so OpenCV doesn't corrupt itself up, had problems when
+    # opening another video in the same process, would open the video and
+    # immediately close.
+    pool = multiprocessing.Pool(maxtasksperchild=1)
 
+    for trailer in trailers_config['trailers']:
+        pool.apply_async(create_clips_for_trailer,
+                        [trailer, trailers_output_dir, scenes_output_dir,
+                         clips_output_dir, args.download])
+
+    pool.close()
+    pool.join()
+
+    for trailer in trailers_config['trailers']:
+        video_path = get_video_file_name(trailers_output_dir, trailer['name'])
+        scene_file = get_scenes_file_name(video_path, scenes_output_dir)
+        if args.render:
+            _render_clips(video_path, clips_output_dir, scene_file,
+                          min_length=args.min_length,
+                          max_length=args.max_length)
     _make_listing(os.path.join(clips_output_dir, '..'))
+
+
+def get_video_file_name(output_dir, name):
+    return os.path.join(output_dir, name)
+
+
+def create_clips_for_trailer(trailer, trailers_output_dir, scenes_output_dir,
+                             clips_output_dir,
+                             download=True):
+    output_path = get_video_file_name(trailers_output_dir, trailer['name'])
+    if download:
+        _download_trailer(output_path, trailer['youtube_id'])
+    logger.info('Searching %s', output_path)
+    scenes_path = _find_scenes(output_path, scenes_output_dir)
 
 
 def download_trailer(args):
@@ -171,17 +209,23 @@ def find_scenes(args):
     _find_scenes(args.video_path, args.output_dir, threshold=args.threshold)
 
 
-def _find_scenes(video_path, output_dir, threshold=THRESHOLD):
+def get_scenes_file_name(video_path, output_dir):
     video_name = os.path.basename(video_path)
     video_stem, video_ext = os.path.splitext(video_name)
 
-    ensure_dir(output_dir)
     scenes_name = '{stem}.json'.format(stem=video_stem)
-    scenes_path = os.path.join(output_dir, scenes_name)
+    return os.path.join(output_dir, scenes_name)
+
+def _find_scenes(video_path, output_dir, threshold=THRESHOLD):
+    ensure_dir(output_dir)
+    scenes_path = get_scenes_file_name(video_path, output_dir)
 
     with video_capture(video_path) as cap:
         scene_splitter = SceneFinder(cap, threshold)
         scenes = scene_splitter.find_scenes()
+
+    if len(scenes) == 0:
+        logger.error('No scenes found for %s' % video_path)
 
     with open(scenes_path, 'w') as scenes_file:
         json.dump(scenes, scenes_file)
@@ -226,6 +270,9 @@ class SceneFinder(object):
         while True:
             ret, frame = self._cap.read()
             if not ret:
+                logger.info('Stopping on frame %d' % self._start_index)
+                if self._start_index == 0:
+                    logger.error('Not able to read any frames')
                 raise StopIteration
             yield cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
@@ -297,7 +344,6 @@ def render_clip(video_path, clip_path, start_time, stop_time):
         '-t', str(stop_time - start_time),
         '-i', video_path,
         '-c:v', 'libvpx',
-        '-b:v', '1M',
         '-c:a', 'libvorbis',
         clip_path,
     ])

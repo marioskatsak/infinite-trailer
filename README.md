@@ -8,6 +8,5 @@ or from the OpenCV site.
 
 ## Create an infinite trailer
 
-Create a directory in this respository called `
-
+    $ python2 infion
 
