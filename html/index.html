@@ -4,27 +4,88 @@
   <style>
     video {
       display: table;
-      top: 0;
-      bottom: 0;
+      top: 10%;
+      bottom: 10%;
       left: 0;
       right: 0;
       width: 100%;
-      height: 100%;
+      height: 90%;
       position: absolute;
       margin: auto;
     }
     #trailer {
       z-index: 1;
     }
-    #trailer-b {
-      z-index: 0;
+    #credits {
+      position: absolute;
+      z-index: 3;
+      color: purple;
+      font-size: 12px;
+      bottom: 0;
+      text-align: center;
+      left: 0;
+      right: 0;
+    }
+    #title {
+      position: absolute;
+      z-index: 3;
+      top: 0;
+      left: 0;
+      right: 0;
+      color: #fff;
+      opacity: 0.5;
+      text-align: center;
+      padding-top: 10px;
+    }
+    #title > * {
+      padding: 0px;
+      margin: 0px;
+    }
+    #title h1 {
+      font-size: 20px;
+    }
+    #title p {
+      font-size: 12px;
+    }
+    .timer,
+    .timer a {
+      color: #fff;
+      opacity: 0.5;
     }
   </style>
   <script src="https://code.jquery.com/jquery-2.1.1.min.js"></script>
 </head>
 <body style="background-color: black;">
+  <div id="title">
+    <h1>Infinite Trailer</h1>
+    <p>Fade to black cuts looping randomly and forever. Auto-generated from film trailers.</p>
+  </div>
   <video id="trailer" width="100%" onended="nextVideo()"></video>
+  <div id="credits">
+    <p id="timer" class="timer">
+    </p>
+    <p class="timer">
+      Seconds watched <a id="timer-link" href="">Tweet this</a>
+    </p>
+    <p>
+      Created by <a href="https://twitter.com/Mariosgohan2">Marios Katsakioris</a>,
+      <a href="https://twitter.com/lloydhenning">Lloyd Henning</a> and
+      <a href="https://twitter.com/suttonpeter">Peter Sutton</a> for
+      <a href="AND HACK#1 – Film Data: For Our Viewing Pleasure">AND film data hack</a>.
+      <a href="https://github.com/mariosgohan/infinite-trailer">Source code</a>
+    </p>
+  </div>
+
 <script>
+
+var timer = $('#timer');
+startTime = new Date();
+timerLink = $('#timer-link');
+setInterval(function () {
+  var time = (new Date() - startTime) / 1000;
+  timer.text(time);
+  timerLink.attr('href', 'http://twitter.com/home?status="I watched an infinite trailer for ' + time + ' seconds http://infinite-trailer.fds.im"');
+}, 100);
 
 var videoPlayer = document.getElementById('trailer');
 
