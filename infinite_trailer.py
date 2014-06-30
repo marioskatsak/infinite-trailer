@@ -84,6 +84,11 @@ def parse_args(argv=None):
     bulk.add_argument('-D', '--skip-download', dest='download',
                       action='store_false')
     bulk.set_defaults(download=True)
+    bulk.add_argument('-u', '--search-scenes', dest='search_scenes',
+                      action='store_true')
+    bulk.add_argument('-U', '--skip-search-scenes', dest='search_scenes',
+                      action='store_false')
+    bulk.set_defaults(search_scenes=True)
     bulk.add_argument('-r', '--render', dest='render', action='store_true')
     bulk.add_argument('-R', '--skip-render', dest='render',
                       action='store_false')
@@ -143,7 +148,7 @@ def bulk(args):
     for trailer in trailers_config['trailers']:
         pool.apply_async(create_clips_for_trailer,
                         [trailer, trailers_output_dir, scenes_output_dir,
-                         clips_output_dir, args.download])
+                         clips_output_dir, args.download, args.search_scenes])
 
     pool.close()
     pool.join()
@@ -163,13 +168,14 @@ def get_video_file_name(output_dir, name):
 
 
 def create_clips_for_trailer(trailer, trailers_output_dir, scenes_output_dir,
-                             clips_output_dir,
-                             download=True):
+                             clips_output_dir, download=True,
+                             search_scenes=True):
     output_path = get_video_file_name(trailers_output_dir, trailer['name'])
     if download:
         _download_trailer(output_path, trailer['youtube_id'])
     logger.info('Searching %s', output_path)
-    scenes_path = _find_scenes(output_path, scenes_output_dir)
+    if search_scenes:
+        _find_scenes(output_path, scenes_output_dir)
 
 
 def download_trailer(args):
