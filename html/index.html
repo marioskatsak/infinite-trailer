@@ -65,7 +65,7 @@
     <h1>Infinite Trailer</h1>
     <p>Fade to black cuts looping randomly and forever. Auto-generated from film trailers. Smoothest playback on Chrome.</p>
   </div>
-  <video id="trailer" width="100%" onended="nextVideo()"></video>
+  <video id="trailer" width="100%"></video>
   <div id="credits">
     <p id="timer" class="timer">
     </p>
@@ -121,6 +121,8 @@ function nextVideo() {
   $(videoPlayer).animate({volume: 1}, fadeInTimeMs);
   videoPlayer.play();
 }
+
+videoPlayer.addEventListener('ended', nextVideo);
 
 var req = new XMLHttpRequest();
 req.overrideMimeType('application/json');
