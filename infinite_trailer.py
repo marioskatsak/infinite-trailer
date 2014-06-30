@@ -32,14 +32,29 @@ LOG_LEVEL_TO_NAMES = OrderedDict((level, logging.getLevelName(level).lower())
 LOG_NAME_TO_LEVEL = OrderedDict((name, level)
                                 for level, name in LOG_LEVEL_TO_NAMES.items())
 
-VIDEO_EXTENSION = 'mp4'
+VIDEO_EXTENSION = 'webm'
+YOUTUBE_VIDEO_FORMAT = '242'
+YOUTUBE_AUDIO_FORMAT = '171'
+
+THRESHOLD = 10
+
+CLIPS_OUTPUT_DIR = os.path.join('html', 'clips')
+
+MIN_CLIP_LENGTH = 0.5
+MAX_CLIP_LENGTH = 5
+
+LISTINGS_PATH = os.path.join('html', 'listings.json')
 
 def main(argv=None):
     args = parse_args(argv=argv)
     configure_logger(args)
 
     command = args.command
-    if command == 'find':
+    if command == 'bulk':
+        bulk(args)
+    elif command == 'download':
+        download_trailer(args)
+    elif command == 'find':
         find_scenes(args)
     elif command == 'render':
         render_clips(args)
@@ -56,19 +71,38 @@ def parse_args(argv=None):
     parser.add_argument('-l', '--log-level', choices=LOG_NAME_TO_LEVEL.keys(),
                         default=LOG_LEVEL_TO_NAMES[logging.INFO])
     subparsers = parser.add_subparsers(dest='command')
+
+    bulk = subparsers.add_parser('bulk')
+    bulk.add_argument('-c', '--trailers_config_path', default='trailers.json')
+    bulk.add_argument('-l', '--listings_path', default=LISTINGS_PATH)
+    bulk.add_argument('-o', '--trailers_output_dir', default='trailers')
+    bulk.add_argument('-s', '--scenes_output_dir', default='scenes')
+    bulk.add_argument('-t', '--clips_output_dir', default=CLIPS_OUTPUT_DIR)
+
+    download = subparsers.add_parser('download')
+    download.add_argument('youtube_id')
+    download.add_argument('output_filename')
+    download.add_argument('-v', '--video_format', default=YOUTUBE_VIDEO_FORMAT)
+    download.add_argument('-a', '--audio_format', default=YOUTUBE_AUDIO_FORMAT)
+
     find = subparsers.add_parser('find')
-    find.add_argument('-t', '--threshold', default=10, type=int)
+    find.add_argument('-t', '--threshold', default=THRESHOLD, type=int)
     find.add_argument('video_path')
     find.add_argument('output_dir')
+
     render = subparsers.add_parser('render')
-    render.add_argument('-m', '--max-length', default=5, type=int)
-    render.add_argument('-n', '--min-length', default=0.5, type=float)
+    render.add_argument('-m', '--max-length', default=MAX_CLIP_LENGTH,
+                        type=float)
+    render.add_argument('-n', '--min-length', default=MIN_CLIP_LENGTH,
+                        type=float)
     render.add_argument('scenes_path')
     render.add_argument('video_path')
     render.add_argument('output_dir')
+
     listing = subparsers.add_parser('listing')
     listing.add_argument('clips_dir')
     listing.add_argument('listing_path')
+
     return parser.parse_args(args=argv[1:])
 
 
@@ -80,22 +114,79 @@ def configure_logger(args):
     logger = logging.getLogger(__name__)
 
 
+def bulk(args):
+    with open(args.trailers_config_path) as trailers_config_file:
+        trailers_config = json.load(trailers_config_file)
+
+    trailers_output_dir = args.trailers_output_dir
+    ensure_dir(trailers_output_dir)
+    scenes_output_dir = args.scenes_output_dir
+    ensure_dir(scenes_output_dir)
+    clips_output_dir = args.clips_output_dir
+    ensure_dir(clips_output_dir)
+
+    for trailer in trailers_config['trailers']:
+        output_path = os.path.join(trailers_output_dir, trailer['name'])
+        _download_trailer(output_path, trailer['youtube_id'])
+        scenes_path = _find_scenes(output_path, scenes_output_dir)
+        _render_clips(output_path, clips_output_dir, scenes_path)
+
+    _make_listing(os.path.join(clips_output_dir, '..'))
+
+
+def download_trailer(args):
+    _download_trailer(args.output_filename,
+                      args.youtube_id,
+                      video_format=args.video_format,
+                      audio_format=args.audio_format)
+
+def _download_trailer(
+        output_filename,
+        youtube_id,
+        video_format=YOUTUBE_VIDEO_FORMAT,
+        audio_format=YOUTUBE_AUDIO_FORMAT):
+    logger.info('Downloading %s ...', output_filename)
+    subprocess.check_call([
+        'youtube-dl',
+        '-o', '{}'.format(output_filename),
+        'https://www.youtube.com/watch?v={}'.format(youtube_id),
+        '-f', '{}+{}'.format(video_format, audio_format)
+    ])
+
+    # XXX: youtube-dl leaves some artifacts of the audio and video streams it
+    # downloaded so we'll delete them.
+    def unlink_download_artifacts(output_filename, dl_format):
+        extension = os.path.splitext(output_filename)[1]
+        output_dir = os.path.dirname(os.path.realpath(output_filename))
+        output_basename = os.path.basename(os.path.realpath(output_filename))
+        basename = os.path.splitext(output_basename)[0]
+        artifact = '{}.f{}{}'.format(basename, dl_format, extension)
+        os.unlink(os.path.join(output_dir, artifact))
+
+    unlink_download_artifacts(output_filename, video_format)
+    unlink_download_artifacts(output_filename, audio_format)
+
+
 def find_scenes(args):
-    video_path = args.video_path
+    _find_scenes(args.video_path, args.output_dir, threshold=args.threshold)
+
+
+def _find_scenes(video_path, output_dir, threshold=THRESHOLD):
     video_name = os.path.basename(video_path)
     video_stem, video_ext = os.path.splitext(video_name)
 
-    output_dir = args.output_dir
     ensure_dir(output_dir)
     scenes_name = '{stem}.json'.format(stem=video_stem)
     scenes_path = os.path.join(output_dir, scenes_name)
 
-    with video_capture(args.video_path) as cap:
-        scene_splitter = SceneFinder(cap, args.threshold)
+    with video_capture(video_path) as cap:
+        scene_splitter = SceneFinder(cap, threshold)
         scenes = scene_splitter.find_scenes()
 
     with open(scenes_path, 'w') as scenes_file:
         json.dump(scenes, scenes_file)
+
+    return scenes_path
 
 
 @contextmanager
@@ -158,24 +249,32 @@ class SceneFinder(object):
         self._scenes.append(scene)
 
 
-
 def render_clips(args):
-    video_path = args.video_path
+    _render_clips(
+        args.video_path,
+        args.output_dir,
+        args.scenes_path,
+        min_length=args.min_length,
+        max_length=args.max_length
+    )
+
+
+def _render_clips(video_path, output_dir, scenes_path,
+                  min_length=MIN_CLIP_LENGTH, max_length=MAX_CLIP_LENGTH):
     video_name = os.path.basename(video_path)
     video_stem, video_ext = os.path.splitext(video_name)
 
-    output_dir = args.output_dir
     clips_dir = os.path.join(output_dir, video_stem)
     ensure_dir(output_dir)
     if os.path.isdir(clips_dir):
         shutil.rmtree(clips_dir)
     os.mkdir(clips_dir)
 
-    with open(args.scenes_path) as scenes_file:
+    with open(scenes_path) as scenes_file:
         scenes = json.load(scenes_file)
 
     def min_max_length(scene):
-        return args.min_length < scene[1] - scene[0] < args.max_length
+        return min_length < scene[1] - scene[0] < max_length
     scenes = filter(min_max_length, scenes)
 
     pool = multiprocessing.Pool()
@@ -197,8 +296,9 @@ def render_clip(video_path, clip_path, start_time, stop_time):
         '-ss', str(start_time),
         '-t', str(stop_time - start_time),
         '-i', video_path,
-        '-strict',
-        '-2',
+        '-c:v', 'libvpx',
+        '-b:v', '1M',
+        '-c:a', 'libvorbis',
         clip_path,
     ])
 
@@ -209,15 +309,19 @@ def ensure_dir(path):
 
 
 def make_listing(args):
+    _make_listing(args.clips_dir, listing_path=args.listing_path)
+
+
+def _make_listing(clips_dir, listing_path=LISTINGS_PATH):
     listing = {'videos': []}
-    for root, dirs, files in os.walk(args.clips_dir):
+    for root, dirs, files in os.walk(clips_dir):
         for file_ in files:
             if os.path.splitext(file_)[1] != '.{}'.format(VIDEO_EXTENSION):
                 continue
-            common_prefix = os.path.commonprefix([args.clips_dir, root])
+            common_prefix = os.path.commonprefix([clips_dir, root])
             path = os.path.join(root[len(common_prefix) + 1:], file_)
             listing['videos'].append(path)
-    with open(args.listing_path, 'w') as listing_file:
+    with open(listing_path, 'w') as listing_file:
         json.dump(listing, listing_file)
 
 

@@ -31,7 +31,7 @@ var videoPlayer = document.getElementById('trailer');
 var videos = null;
 var timeOut = null;
 var fadeOutTimeMs = 300;
-var fadeInTimeMs = 100;
+var fadeInTimeMs = 200;
 
 videoPlayer.addEventListener('loadedmetadata', function() {
   var durationMs = Math.round(videoPlayer.duration * 1000);
@@ -47,7 +47,6 @@ function getRandomVideoSrc() {
 
 function nextVideo() {
   videoPlayer.src = getRandomVideoSrc();
-  console.log(videoPlayer.src);
   videoPlayer.controls = false;
   videoPlayer.volume = 0;
   if (timeOut != null) {
@@ -63,7 +62,6 @@ req.open('GET', 'listings.json', true);
 req.onreadystatechange = function(request, url) {
   if (req.readyState == 4) {
     if (req.status == 200) {
-      console.log(req.responseText);
       videos = JSON.parse(req.responseText).videos;
       nextVideo();
     }
